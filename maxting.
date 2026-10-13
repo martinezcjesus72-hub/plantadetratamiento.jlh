@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador 3D de Planta de Tratamiento de Agua Potable (PTAP)</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0b132b;
+            color: #ffffff;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            width: 320px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 10;
+        }
+        h1 {
+            font-size: 18px;
+            margin-top: 0;
+            color: #38bdf8;
+            border-bottom: 2px solid #38bdf8;
+            padding-bottom: 8px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            margin-bottom: 5px;
+            color: #94a3b8;
+        }
+        input[type="range"] {
+            width: 100%;
+            accent-color: #38bdf8;
+            cursor: pointer;
+        }
+        .value-display {
+            font-weight: bold;
+            color: #f8fafc;
+            float: right;
+        }
+        #metrics-panel {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(15, 23, 42, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(8px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            width: 380px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 10;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            padding-bottom: 4px;
+        }
+        .metric-val {
+            color: #34d399;
+            font-family: monospace;
+        }
+        #instructions {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(15, 23, 42, 0.85);
+            padding: 15px;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #cbd5e1;
+            max-width: 250px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+    <!-- Importación de Three.js desde CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui-container">
+        <h1>Controles PTAP</h1>
+        
+        <div class="control-group">
+            <label for="flowInput">Caudal de Entrada ($Q$): <span id="flowVal" class="value-display">125.50</span> L/s</label>
+            <input type="range" id="flowInput" min="10.00" max="500.00" step="0.50" value="125.50">
+        </div>
+
+        <div class="control-group">
+            <label for="pressureInput">Presión de Bombeo ($P$): <span id="pressureVal" class="value-display">3.50</span> bar</label>
+            <input type="range" id="pressureInput" min="1.00" max="10.00" step="0.10" value="3.50">
+        </div>
+
+        <div class="control-group">
+            <label for="purityInput">Pureza Objetivo ($T$): <span id="purityVal" class="value-display">95.20</span> %</label>
+            <input type="range" id="purityInput" min="50.00" max="99.90" step="0.10" value="95.20">
+        </div>
+    </div>
+
+    <div id="metrics-panel">
+        <h1>Modelado Hidráulico e Ingeniería</h1>
+        <div class="metric-row">
+            <span>Perdida de Carga por Fricción ($h_f$):</span>
+            <span id="hfVal" class="metric-val">0.00 m</span>
+        </div>
+        <div class="metric-row">
+            <span>Costo Bombeo Mensual Estimado:</span>
+            <span id="costVal" class="metric-val">$0.00 USD</span>
+        </div>
+        <div class="metric-row">
+            <span>Canal Optimizado (Ancho $b$ / Tirante $y$):</span>
+            <span id="canalVal" class="metric-val">0.00 m / 0.00 m</span>
+        </div>
+        <div class="metric-row">
+            <span>Alcance Chorro Vertedero ($X_{max}$):</span>
+            <span id="parabolicVal" class="metric-val">0.00 m</span>
+        </div>
+    </div>
+
+    <div id="instructions">
+        <strong>Instrucciones:</strong><br>
+        • Usa el mouse para rotar la vista 3D.<br>
+        • Haz scroll para hacer zoom.<br>
+        • Modifica los parámetros decimales para ver el comportamiento en tiempo real de la planta.
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- CONFIGURACIÓN DE LA ESCENA 3D (THREE.JS) ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0b132b);
+        scene.fog = new THREE.FogExp2(0x0b132b, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 18, 30);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        // Iluminación
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(20, 40, 20);
+        scene.add(dirLight);
+
+        // --- CONSTRUCCIÓN DE LA PLANTA DE TRATAMIENTO (PTAP) ---
+        // Estructuras base: Tanque de mezcla rápida, Floculador, Sedimentador, Filtros y Tanque de contacto.
+        const structureMaterial = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.4 });
+        const waterMaterial = new THREE.MeshPhysicalMaterial({ 
+            color: 0x38bdf8, 
+            transparent: true, 
+            opacity: 0.7, 
+            roughness: 0.1, 
+            transmission: 0.6 
+        });
+
+        // 1. Tanque de Captación / Mezcla
+        const mixTankGeo = new THREE.CylinderGeometry(3, 3, 4, 32);
+        const mixTank = new THREE.Mesh(mixTankGeo, structureMaterial);
+        mixTank.position.set(-12, 2, 0);
+        scene.add(mixTank);
+
+        const mixWaterGeo = new THREE.CylinderGeometry(2.8, 2.8, 3.5, 32);
+        const mixWater = new THREE.Mesh(mixWaterGeo, waterMaterial);
+        mixWater.position.set(-12, 1.75, 0);
+        scene.add(mixWater);
+
+        // 2. Floculadores y Sedimentadores (Bloques rectangulares)
+        const sedGeo = new THREE.BoxGeometry(6, 3, 4);
+        const sedimenter = new THREE.Mesh(sedGeo, structureMaterial);
+        sedimenter.position.set(-3, 1.5, 0);
+        scene.add(sedimenter);
+
+        const sedWaterGeo = new THREE.BoxGeometry(5.8, 2.5, 3.8);
+        const sedWater = new THREE.Mesh(sedWaterGeo, waterMaterial);
+        sedWater.position.set(-3, 1.25, 0);
+        scene.add(sedimenter); // Nota: mantenemos referencia dinámica
+
+        // 3. Filtros de Arena rápidos
+        const filterGeo = new THREE.BoxGeometry(4, 3, 4);
+        const filterTank = new THREE.Mesh(filterGeo, structureMaterial);
+        filterTank.position.set(4, 1.5, 0);
+        scene.add(filterTank);
+
+        // 4. Tanque de Almacenamiento Final (Agua Potable)
+        const cleanTankGeo = new THREE.CylinderGeometry(3.5, 3.5, 4, 32);
+        const cleanTank = new THREE.Mesh(cleanTankGeo, structureMaterial);
+        cleanTank.position.set(12, 2, 0);
+        scene.add(cleanTank);
+
+        const cleanWaterGeo = new THREE.CylinderGeometry(3.3, 3.3, 3.5, 32);
+        const cleanWater = new THREE.Mesh(cleanWaterGeo, waterMaterial);
+        cleanWater.position.set(12, 1.75, 0);
+        scene.add(cleanWater);
+
+        // Tuberías de conexión animadas
+        const pipeMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.8, roughness: 0.2 });
+        
+        function createPipe(x1, z1, x2, z2) {
+            const length = Math.hypot(x2 - x1, z2 - z1);
+            const pipeGeo = new THREE.CylinderGeometry(0.4, 0.4, length, 16);
+            const pipe = new THREE.Mesh(pipeGeo, pipeMat);
+            pipe.rotation.x = Math.PI / 2;
+            pipe.position.set((x1 + x2) / 2, 1, (z1 + z2) / 2);
+            scene.add(pipe);
+        }
+        createPipe(-9, 0, -6, 0);
+        createPipe(0, 0, 2, 0);
+        createPipe(6, 0, 8.5, 0);
+
+        // Su suelo base para la planta
+        const floorGeo = new THREE.PlaneGeometry(60, 40);
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.9 });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = -0.05;
+        scene.add(floor);
+
+        // --- INTERACCIÓN Y MODELOS MATEMÁTICOS (ECUACIONES LINEALES Y CUADRÁTICAS) ---
+        const flowInput = document.getElementById('flowInput');
+        const pressureInput = document.getElementById('pressureInput');
+        const purityInput = document.getElementById('purityInput');
+
+        const flowVal = document.getElementById('flowVal');
+        const pressureVal = document.getElementById('pressureVal');
+        const purityVal = document.getElementById('purityVal');
+
+        const hfVal = document.getElementById('hfVal');
+        const costVal = document.getElementById('costVal');
+        const canalVal = document.getElementById('canalVal');
+        const parabolicVal = document.getElementById('parabolicVal');
+
+        function updateHydraulics() {
+            // Leer valores decimales exactos
+            let Q = parseFloat(flowInput.value);      // Caudal en L/s
+            let P = parseFloat(pressureInput.value);  // Presión en bar
+            let T = parseFloat(purityInput.value);    // Pureza en %
+
+            flowVal.textContent = Q.toFixed(2);
+            pressureVal.textContent = P.toFixed(2);
+            purityVal.textContent = T.toFixed(2);
+
+            // 1. ECUACIÓN LINEAL: Pérdida de carga por fricción (hf)
+            // Modelo simplificado basado en Darcy-Weisbach / Hazen-Williams linealizado para tubería estándar:
+            // hf = k * Q^1.85 (aproximado linealmente por tramos o coeficiente proporcional K_f * Q)
+            const k_friction = 0.000125; // Coeficiente de fricción de rugosidad de tubería comercial
+            let hf = k_friction * Math.pow(Q, 1.85) + (P * 0.15); 
+
+            // 2. ECUACIÓN LINEAL / FINANCIERA: Costo de bombeo mensual en función del volumen impulsado
+            // Volumen mensual = Q (L/s) * 86400 s/día * 30 días / 1000 L/m^3 = m^3/mes
+            let volumeMonthly_m3 = (Q * 86400 * 30) / 1000;
+            // Costo de bombeo proporcional a la altura manométrica y el volumen (kWh * tarifa unitaria)
+            let energyCostPerM3 = 0.045; // USD por m^3 por cada bar de presión impulsada
+            let monthlyCost = volumeMonthly_m3 * energyCostPerM3 * (P / 2.5);
+
+            // 3. ECUACIÓN CUADRÁTICA: Optimización de dimensiones de canal rectangular de sección óptima
+            // Condición de máxima eficiencia hidráulica: b = 2 * y  ->  Área A = b * y = 2 * y^2 = Q / V
+            // Asumiendo velocidad media V = 0.8 m/s, despejamos el tirante y mediante ecuación cuadrática 2y^2 = Q_m3s / V
+            let Q_m3s = Q / 1000; 
+            let V_med = 0.80; // m/s
+            let optimalY = Math.sqrt((Q_m3s / V_med) / 2); // Resolución cuadrática simplificada
+            let optimalB = 2 * optimalY;
+
+            // 4. ECUACIÓN CUADRÁTICA: Trayectoria parabólica del chorro de descarga en vertedero (Caída libre)
+            // y(x) = h_verteder - (g / (2 * v_0^2)) * x^2
+            // Alcance horizontal máximo X_max considerando una carga hidráulica H_c y velocidad de salida v_0 = sqrt(2 * g * H_c)
+            let H_c = 1.20; // Carga sobre el vertedero en metros
+            let g = 9.81;   // m/s^2
+            let v_0 = Math.sqrt(2 * g * H_c) * (Q / 250); // Velocidad influenciada por caudal
+            let heightDrop = 3.00; // Altura de caída del vertedero en metros
+            let maxReachX = v_0 * Math.sqrt((2 * heightDrop) / g);
+
+            // Actualizar interfaz de métricas con decimales exactos
+            hfVal.textContent = hf.toFixed(3) + " m";
+            costVal.textContent = "$" + monthlyCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " USD";
+            canalVal.textContent = optimalB.toFixed(3) + " m / " + optimalY.toFixed(3) + " m";
+            parabolicVal.textContent = maxReachX.toFixed(3) + " m";
+
+            // Dinámica visual en 3D basada en los controles
+            let scaleWater = Q / 125.50;
+            mixWater.scale.set(scaleWater, scaleWater, scaleWater);
+            cleanWater.scale.set(scaleWater, scaleWater, scaleWater);
+        }
+
+        flowInput.addEventListener('input', updateHydraulics);
+        pressureInput.addEventListener('input', updateHydraulics);
+        purityInput.addEventListener('input', updateHydraulics);
+
+        // Inicializar cálculos base
+        updateHydraulics();
+
+        // --- BUCLE DE ANIMACIÓN Y RENDERIZADO ---
+        let clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            let elapsedTime = clock.getElapsedTime();
+
+            // Animación sutil de rotación en tanques o flujo visual
+            mixWater.rotation.y = elapsedTime * 0.5;
+            cleanWater.rotation.y = -elapsedTime * 0.3;
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        // Manejo de responsividad de ventana
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
